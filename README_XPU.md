@@ -30,6 +30,21 @@ generation falls back to the slower eager path automatically.
 .venv\Scripts\python.exe webui.py --host 127.0.0.1 --port 7860
 ```
 
+### Web UI (Indonesian)
+
+- **Clone suara**: upload or record a reference clip, trim it (start/end, strip leading and
+  trailing silence, peak-normalize, cap the length), name it, and save it with default
+  generation settings. It can also synthesize a test sentence right after saving.
+  Voices are stored in `voices/<name>/` (`reference.wav` + `voice.json`); `--voices_dir`
+  changes the location.
+- **Generate**: pick a saved voice. Its settings load into the panel, where they can be
+  changed for this generation or saved back as the voice's defaults. Shows the text after
+  normalization, the seed used (enter it again for an identical result) and the speed.
+- Every working generation parameter is visible as a slider, with presets (Seimbang,
+  Stabil, Ekspresif, Cepat, Kualitas tinggi) as starting points.
+  `edge_fade_duration` / `edge_pad_duration` are not shown because `generate()` ignores them.
+- The default host is now `127.0.0.1`; pass `--host 0.0.0.0` to open it on the LAN.
+
 Models (~5 GB) download to `%USERPROFILE%\.cache\huggingface` on first run.
 Only one model process fits in 12 GB VRAM: if two run at once, Windows spills to shared
 system memory and generation becomes 50-100x slower.
@@ -50,8 +65,10 @@ system memory and generation becomes 50-100x slower.
   bucketing lets them be reused (vocoder 3 s → 0.1–0.4 s once a bucket is warm).
 - `confuciustts/utils/audio_io.py`: wav load/save via soundfile (torchaudio >= 2.9 needs
   torchcodec for `load`/`save`).
-- `webui.py`: `--backend auto|hf|vllm` and `--device`. vLLM is CUDA-only, so on XPU the
-  HuggingFace `ConfuciusTTS` backend is used.
+- `webui.py`: rewritten with a voice library (Clone / Generate / Panduan tabs) and all
+  settings; `--backend auto|hf|vllm`, `--device`, `--voices_dir`. vLLM is CUDA-only, so on
+  XPU the HuggingFace `ConfuciusTTS` backend is used (settings vLLM does not accept are
+  skipped, and the UI says which).
 
 ## Performance (B580, fp32)
 
