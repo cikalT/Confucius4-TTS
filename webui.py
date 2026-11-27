@@ -36,7 +36,7 @@ import torch
 # Make the local package importable when run as a script.
 sys.path.insert(0, str(Path(__file__).parent))
 
-from confuciustts.utils.audio_io import load_audio, save_audio
+from confuciustts.utils.audio_io import decode_with_av, load_audio, save_audio
 from confuciustts.utils.common import resolve_device
 from webui_waveform import selection_of, waveform_editor, waveform_value, with_selection
 
@@ -70,6 +70,13 @@ DEFAULTS = {
     "seed": -1,
 }
 SETTING_KEYS = list(DEFAULTS)
+
+# Extensions accepted by the "any format" upload (browsers often give video files or
+# unusual audio files a MIME type that gr.Audio rejects).
+MEDIA_EXTS = [".mp4", ".m4v", ".mpeg", ".mpg", ".mpe", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".flv",
+              ".3gp", ".ts", ".mts", ".m2ts", ".vob", ".m4a", ".aac", ".wma", ".amr", ".opus", ".ogg",
+              ".oga", ".mp3", ".wav", ".flac", ".aiff", ".aif", ".caf", ".ac3", ".mka"]
+MAX_EXTRACT_SECONDS = 600
 
 DEFAULT_PRESET = "Seimbang (default)"
 PRESETS = {
@@ -360,6 +367,13 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
                     with gr.Column(scale=3):
                         ref_in = gr.Audio(sources=["upload", "microphone"], type="filepath",
                                           label="Upload atau rekam suara")
+                        with gr.Row(equal_height=True):
+                            any_upload = gr.UploadButton(
+                                "Ambil audio dari video / format lain", size="sm", scale=0, min_width=280,
+                                file_types=["audio", "video"] + MEDIA_EXTS)
+                            gr.Markdown("<span class='hint'>Untuk file yang ditolak kotak di atas: mp4, mpeg, "
+                                        "mov, mkv, avi, webm, m4a, wma, amr, dll. Audionya diambil otomatis "
+                                        f"(maks. {MAX_EXTRACT_SECONDS // 60} menit pertama).</span>")
                     with gr.Column(scale=2):
                         clone_name = gr.Textbox(label="Nama suara", placeholder="mis. Narator Budi")
                         clone_lang = gr.Dropdown(LANGUAGES, value="id", label="Bahasa default")
@@ -494,6 +508,29 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
             return value, start, end
 
         ref_in.change(on_ref_change, inputs=[ref_in, max_seconds], outputs=[wave, trim_start, trim_end])
+
+        def on_any_upload(file):
+            """Extract the audio track of a video / any media file into a WAV for the audio box."""
+            path = file if isinstance(file, str) else getattr(file, "name", None)
+            if not path:
+                return gr.update()
+            try:
+                wav, sr = decode_with_av(path, target_sr=24000, max_seconds=MAX_EXTRACT_SECONDS)
+            except ImportError as exc:
+                raise gr.Error("Butuh paket PyAV: pip install av") from exc
+            except ValueError as exc:  # no audio stream
+                raise gr.Error("File ini tidak punya trek audio (video tanpa suara).") from exc
+            except Exception as exc:
+                raise gr.Error(f"File ini tidak bisa dibaca sebagai audio/video: {exc}") from exc
+            if len(wav) < sr * 0.5:
+                raise gr.Error("Trek audionya kosong atau terlalu pendek.")
+            if len(wav) >= MAX_EXTRACT_SECONDS * sr:
+                gr.Info(f"File panjang: hanya {MAX_EXTRACT_SECONDS // 60} menit pertama yang diambil.")
+            out = Path(tempfile.gettempdir()) / f"confucius4_extract_{uuid.uuid4().hex[:10]}.wav"
+            save_audio(out, torch.from_numpy(wav).unsqueeze(0), sr)
+            return str(out)
+
+        any_upload.upload(on_any_upload, inputs=any_upload, outputs=ref_in)
         wave.input(selection_of, inputs=wave, outputs=[trim_start, trim_end])
         trim_start.input(with_selection, inputs=[wave, trim_start, trim_end], outputs=wave)
         trim_end.input(with_selection, inputs=[wave, trim_start, trim_end], outputs=wave)

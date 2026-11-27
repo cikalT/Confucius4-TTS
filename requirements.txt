@@ -22,6 +22,7 @@ matplotlib==3.10.8
 # ==================== Audio Processing ====================
 librosa==0.10.2.post1
 soundfile==0.13.1
+av==17.1.0  # decode m4a/aac/wma/amr and audio tracks of video files (mp4, mpeg, mov, ...)
 torchaudio==2.7.0
 
 # ==================== Text & Language Processing ====================

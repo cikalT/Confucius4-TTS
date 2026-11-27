@@ -35,7 +35,9 @@ generation falls back to the slower eager path automatically.
 - **Clone suara**: upload or record a reference clip and pick the part to keep in a
   waveform editor (`webui_waveform.py`): drag on empty space for a new selection, drag the
   edges to resize, drag the middle to move it, play the selection, and double-click to play.
-  Start/end stay in sync with the number fields. Then optionally strip leading and trailing
+  Start/end stay in sync with the number fields. Files the audio box rejects (video such as
+  mp4/mpeg/mov/mkv, or m4a/wma/amr) go through the "Ambil audio dari video / format lain"
+  button: the audio track is extracted with PyAV (`av` in requirements.txt, first 10 minutes). Then optionally strip leading and trailing
   silence, peak-normalize and cap the length, name the voice, and save it with default
   generation settings. It can also synthesize a test sentence right after saving.
   Voices are stored in `voices/<name>/` (`reference.wav` + `voice.json`); `--voices_dir`
