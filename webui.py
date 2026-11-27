@@ -71,11 +71,7 @@ DEFAULTS = {
 }
 SETTING_KEYS = list(DEFAULTS)
 
-# Extensions accepted by the "any format" upload (browsers often give video files or
-# unusual audio files a MIME type that gr.Audio rejects).
-MEDIA_EXTS = [".mp4", ".m4v", ".mpeg", ".mpg", ".mpe", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".flv",
-              ".3gp", ".ts", ".mts", ".m2ts", ".vob", ".m4a", ".aac", ".wma", ".amr", ".opus", ".ogg",
-              ".oga", ".mp3", ".wav", ".flac", ".aiff", ".aif", ".caf", ".ac3", ".mka"]
+# Uploaded media longer than this is cut (only the reference clip matters).
 MAX_EXTRACT_SECONDS = 600
 
 DEFAULT_PRESET = "Seimbang (default)"
@@ -365,15 +361,16 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
                             "musik/gema. Emosi & gaya bicara rekaman ikut ditiru.</span>")
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=3):
-                        ref_in = gr.Audio(sources=["upload", "microphone"], type="filepath",
-                                          label="Upload atau rekam suara")
-                        with gr.Row(equal_height=True):
-                            any_upload = gr.UploadButton(
-                                "Ambil audio dari video / format lain", size="sm", scale=0, min_width=280,
-                                file_types=["audio", "video"] + MEDIA_EXTS)
-                            gr.Markdown("<span class='hint'>Untuk file yang ditolak kotak di atas: mp4, mpeg, "
-                                        "mov, mkv, avi, webm, m4a, wma, amr, dll. Audionya diambil otomatis "
-                                        f"(maks. {MAX_EXTRACT_SECONDS // 60} menit pertama).</span>")
+                        # gr.Audio's own upload box rejects many valid files by MIME type
+                        # (e.g. .mpeg is reported as video/mpeg), so uploads go through a
+                        # plain file drop zone and are decoded server-side.
+                        file_in = gr.File(label="Upload audio atau video", file_count="single",
+                                          type="filepath", height=110)
+                        gr.Markdown("<span class='hint'>Format apa saja: wav, mp3, m4a, ogg, flac, wma, "
+                                    "mp4, mpeg, mov, mkv, webm, dll. Dari video, audionya diambil otomatis "
+                                    f"(maks. {MAX_EXTRACT_SECONDS // 60} menit pertama).</span>")
+                        ref_in = gr.Audio(sources=["microphone"], type="filepath",
+                                          label="…atau rekam langsung (hasil upload juga diputar di sini)")
                     with gr.Column(scale=2):
                         clone_name = gr.Textbox(label="Nama suara", placeholder="mis. Narator Budi")
                         clone_lang = gr.Dropdown(LANGUAGES, value="id", label="Bahasa default")
@@ -510,12 +507,12 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
         ref_in.change(on_ref_change, inputs=[ref_in, max_seconds], outputs=[wave, trim_start, trim_end])
 
         def on_any_upload(file):
-            """Extract the audio track of a video / any media file into a WAV for the audio box."""
+            """Decode any audio file or video's audio track into a WAV for the audio box."""
             path = file if isinstance(file, str) else getattr(file, "name", None)
             if not path:
                 return gr.update()
             try:
-                wav, sr = decode_with_av(path, target_sr=24000, max_seconds=MAX_EXTRACT_SECONDS)
+                wav, sr = decode_with_av(path, max_seconds=MAX_EXTRACT_SECONDS)
             except ImportError as exc:
                 raise gr.Error("Butuh paket PyAV: pip install av") from exc
             except ValueError as exc:  # no audio stream
@@ -530,7 +527,8 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
             save_audio(out, torch.from_numpy(wav).unsqueeze(0), sr)
             return str(out)
 
-        any_upload.upload(on_any_upload, inputs=any_upload, outputs=ref_in)
+        file_in.upload(on_any_upload, inputs=file_in, outputs=ref_in)
+        file_in.clear(lambda: None, outputs=ref_in)
         wave.input(selection_of, inputs=wave, outputs=[trim_start, trim_end])
         trim_start.input(with_selection, inputs=[wave, trim_start, trim_end], outputs=wave)
         trim_end.input(with_selection, inputs=[wave, trim_start, trim_end], outputs=wave)
