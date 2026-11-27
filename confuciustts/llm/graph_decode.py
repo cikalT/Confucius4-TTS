@@ -161,7 +161,14 @@ class GraphDecoder:
         return out.clone()
 
     def reorder(self, beam_idx: torch.Tensor):
-        L = self.length
+        # Reorder up to the next bucket boundary instead of exactly `length`: the
+        # temporary from index_select then has one of a few fixed sizes, so the caching
+        # allocator reuses its block. With an exact (growing every step) size, each step
+        # needed a slightly bigger block and the reserved pool grew by GBs over a long
+        # utterance; on Arc/Windows that silently spills into shared system memory
+        # instead of raising OOM, and generation slows to a crawl or the device is lost.
+        # Positions past `length` are never attended, so reordering them is harmless.
+        L = min(((self.length + self.BUCKET - 1) // self.BUCKET) * self.BUCKET, self.max_len)
         beam_idx = beam_idx.to(self.device)
         self.k[:, :, :, :L] = self.k[:, :, :, :L].index_select(1, beam_idx)
         self.v[:, :, :, :L] = self.v[:, :, :, :L].index_select(1, beam_idx)

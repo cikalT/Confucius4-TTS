@@ -185,6 +185,22 @@ def process_reference(path, trim_start, trim_end, remove_silence, top_db, normal
 # --------------------------------------------------------------------------- #
 # UI helpers
 # --------------------------------------------------------------------------- #
+def free_accelerator_cache(device: str):
+    acc = getattr(torch, device, None) if device in ("cuda", "xpu") else None
+    if acc is not None and acc.is_available():
+        acc.synchronize()
+        acc.empty_cache()
+
+
+def vram_summary(device: str) -> str:
+    acc = getattr(torch, device, None) if device in ("cuda", "xpu") else None
+    if acc is None or not acc.is_available():
+        return device
+    gb = 1024 ** 3
+    return (f"VRAM alloc {acc.memory_allocated() / gb:.1f} GB, reserved {acc.memory_reserved() / gb:.1f} GB, "
+            f"peak {acc.max_memory_allocated() / gb:.1f} GB")
+
+
 def settings_from_values(values):
     s = dict(zip(SETTING_KEYS, values))
     if s["seed"] is None or s["seed"] == "":
@@ -281,13 +297,22 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
         ignored = [k for k in s if k not in accepted]
 
         t0 = time.time()
+        print(f"[{time.strftime('%H:%M:%S')}] generate: {len(text)} chars, lang={lang}, "
+              f"ref={Path(ref_path).parent.name}, seed={seed}", flush=True)
         try:
             audio = model.generate(text, lang, ref_path, verbose=False, **kwargs)
             if asyncio.iscoroutine(audio):  # vLLM backend is async
                 audio = loop.run_until_complete(audio)
         except Exception as exc:
             raise gr.Error(f"Gagal generate: {type(exc).__name__}: {exc}") from exc
+        finally:
+            # Return cached blocks from this request's shapes to the driver. Without this the
+            # allocator keeps growing across requests until VRAM spills into shared system
+            # memory, which makes generation crawl (seen on a 12 GB Arc B580).
+            free_accelerator_cache(device)
         elapsed = time.time() - t0
+        print(f"[{time.strftime('%H:%M:%S')}]   done: {audio.shape[-1] / model.sample_rate:.1f}s audio "
+              f"in {elapsed:.1f}s, {vram_summary(device)}", flush=True)
 
         out = Path(tempfile.gettempdir()) / f"confucius4_{uuid.uuid4().hex[:10]}.wav"
         save_audio(out, audio, model.sample_rate)

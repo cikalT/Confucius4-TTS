@@ -85,6 +85,14 @@ system memory and generation becomes 50-100x slower.
 | T2S, greedy | 20.5 ms/token | 6.3 ms/token |
 | 5–6 s utterance, warm | 12–14 s (~2.3× real time) | 5–6 s (~1× real time) |
 
+Memory: on Arc under Windows, running out of VRAM does not raise OOM. The driver silently
+spills into shared system RAM, generation slows down 10-100x, and eventually the device can be
+lost. Three things keep usage flat (~7 GB peak, also for 30 s multi-segment texts):
+the beam-search KV-cache reorder uses bucket-sized temporaries (exact, growing sizes
+fragmented the allocator by several GB per long utterance), `empty_cache()` runs between
+text segments, and the web UI calls it after every request. The UI also logs each request with
+its VRAM usage.
+
 The first request with a new length is slower (graph capture + vocoder kernel compile,
 ~11 s); later requests reuse them. Peak VRAM ~8–10 GB. bf16 autocast did not help.
 Remaining time: HF beam-search bookkeeping (~7 ms/token) and the S2A flow-matching stage

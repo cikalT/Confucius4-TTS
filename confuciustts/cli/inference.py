@@ -370,6 +370,11 @@ class ConfuciusTTS:
             if audio.dim() == 1:
                 audio = audio.unsqueeze(0)
             chunks.append(audio)
+            if self.device.type == "xpu":
+                # Each segment has different T2S/S2A/vocoder shapes; hand the cached blocks
+                # back so long texts don't accumulate reserved memory (on Windows the XPU
+                # driver spills into shared RAM instead of failing, which is very slow).
+                torch.xpu.empty_cache()
 
         # Merge segments with cross-fade
         merged = cross_fade_concat(chunks, self.sample_rate,
