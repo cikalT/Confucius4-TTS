@@ -22,6 +22,8 @@ from confuciustts.frontend.text_normalizer import TextNormalizer
 from confuciustts.llm.llm import Text2Semantic, Text2SemanticConfig
 from confuciustts.utils.audio_features import mel_spectrogram
 from confuciustts.utils.audio_post import cross_fade_concat
+from confuciustts.utils.common import resolve_device
+from confuciustts.utils.audio_io import load_audio, save_audio
 from confuciustts.utils.text_utils import LANGUAGE_TOKEN_MAP
 
 
@@ -37,15 +39,15 @@ class ConfuciusTTS:
     Args:
         config_path: Path to YAML configuration file with model paths and audio parameters
         t2s_checkpoint: Optional path to T2S checkpoint (overrides config)
-        device: Device for inference ("cuda" or "cpu")
+        device: Device for inference ("cuda", "xpu", "cpu" or "auto")
     """
     def __init__(
         self,
         config_path: str = "config/inference_config.yaml",
         t2s_checkpoint: Optional[str] = None,
-        device: str = "cuda",
+        device: Optional[str] = "auto",
     ):
-        self.device = torch.device(device)
+        self.device = torch.device(resolve_device(device))
 
         with open(config_path, "r", encoding="utf-8") as f:
             self.cfg = yaml.safe_load(f)
@@ -117,7 +119,7 @@ class ConfuciusTTS:
         Returns:
             Tuple of (wav_16k, wav_tgt) resampled to 16kHz and target sample rate
         """
-        wav, sr = torchaudio.load(prompt_wav)
+        wav, sr = load_audio(prompt_wav)
         if wav.shape[0] > 1:
             wav = wav.mean(dim=0, keepdim=True)
         wav_16k = wav if sr == 16000 else torchaudio.functional.resample(wav, sr, 16000)
@@ -254,7 +256,30 @@ class ConfuciusTTS:
             inference_cfg_rate=inference_cfg_rate,
         )
         # Vocoder: Mel → Waveform
-        return self.bigvgan(mel.float().to(self.device)).squeeze(1)
+        return self._vocode(mel.float().to(self.device))
+
+    # Mel frames per vocoder bucket on Intel XPU (see _vocode).
+    XPU_VOCODER_BUCKET = 256
+
+    def _vocode(self, mel: torch.Tensor) -> torch.Tensor:
+        """Run BigVGAN on a (B, n_mels, T) mel.
+
+        On Intel XPU, oneDNN JIT-compiles convolution kernels for every new input
+        length (~3s each on Arc B580), which dominates runtime because every
+        utterance has a different length. Padding the mel to a fixed bucket size
+        with silence lets the compiled kernels be reused; the output is trimmed
+        back to the true length.
+        """
+        if self.device.type != "xpu":
+            return self.bigvgan(mel).squeeze(1)
+        T = mel.shape[-1]
+        bucket = self.XPU_VOCODER_BUCKET
+        padded_T = ((T + bucket - 1) // bucket) * bucket
+        if padded_T != T:
+            silence = float(torch.log(torch.tensor(1e-5)))  # log-mel floor
+            mel = torch.nn.functional.pad(mel, (0, padded_T - T), value=silence)
+        wav = self.bigvgan(mel).squeeze(1)
+        return wav[..., : T * self.hop_length]
 
     @torch.no_grad()
     def generate(
@@ -363,7 +388,7 @@ def main():
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--config", type=str, default="config/inference_config.yaml")
     parser.add_argument("--t2s_checkpoint", type=str, default=None)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", type=str, default="auto", help="cuda, xpu, cpu or auto")
     parser.add_argument("--cross_fade_duration", type=float, default=0.3)
     parser.add_argument("--edge_fade_duration", type=float, default=0.1)
     parser.add_argument("--edge_pad_duration", type=float, default=0.1)
@@ -382,7 +407,7 @@ def main():
         edge_pad_duration=args.edge_pad_duration,
         verbose=args.verbose,
     )
-    torchaudio.save(args.output, audio.cpu(), model.sample_rate)
+    save_audio(args.output, audio, model.sample_rate)
     print(f"Saved: {args.output}")
 
 

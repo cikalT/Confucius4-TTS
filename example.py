@@ -18,6 +18,7 @@ import torchaudio
 sys.path.insert(0, str(Path(__file__).parent))
 
 from confuciustts.cli.inference import ConfuciusTTS
+from confuciustts.utils.audio_io import save_audio
 
 
 DEFAULT_TEXT = (
@@ -35,6 +36,8 @@ def parse_args():
                         help="Text to synthesize.")
     parser.add_argument("--lang", default="zh",
                         help="Language code (e.g. zh, en, ja, th).")
+    parser.add_argument("--device", default="auto",
+                        help="cuda, xpu (Intel Arc), cpu or auto.")
     parser.add_argument("--out", default="output.wav",
                         help="Output .wav path.")
     return parser.parse_args()
@@ -44,7 +47,7 @@ def main():
     args = parse_args()
     model = ConfuciusTTS(
         config_path=args.config,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        device=args.device,
     )
     print(f"Loaded. sample_rate={model.sample_rate}")
 
@@ -52,7 +55,7 @@ def main():
     audio = model.generate(args.text, args.lang, args.prompt_wav, verbose=True)
     print(f"Generated in {time.time() - t0:.3f}s, shape={tuple(audio.shape)}")
 
-    torchaudio.save(args.out, audio.cpu(), model.sample_rate)
+    save_audio(args.out, audio, model.sample_rate)
     print(f"Saved {args.out} ({audio.shape[-1] / model.sample_rate:.3f}s)")
 
 

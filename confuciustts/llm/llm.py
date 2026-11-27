@@ -12,6 +12,7 @@ from typing import Optional, Tuple
 from .text_encoder import TextEmbeddingProjector
 from .speaker_encoder import Qwen3TTSSpeakerEncoder, Qwen3TTSSpeakerEncoderConfig
 from .position_embeddings import DummyPositionEmbedding, LearnedPositionalEmbedding
+from .graph_decode import GraphDecoder, StaticKVCache, graph_decode_supported
 
 
 
@@ -133,6 +134,10 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
         # Caching for inference efficiency
         self.cached_condition_emb = None
         self.cached_text_emb = None
+
+        # Static-cache graph decoding (Intel XPU); active only inside generate()
+        self._graph_decoder = None
+        self._graph_active = False
 
         self.post_init()
 
@@ -273,6 +278,12 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
                 input_ids=input_ids,
                 attention_mask=attention_mask,
             )
+            if self._graph_active and isinstance(past_key_values, StaticKVCache):
+                # Graph-replayed single-token step (see graph_decode.py)
+                logits = self._graph_decoder.decode(inputs_embeds)
+                return CausalLMOutputWithCrossAttentions(
+                    logits=logits, past_key_values=past_key_values,
+                )
 
         transformer_outputs = self.transformer(
             inputs_embeds=inputs_embeds,
@@ -306,6 +317,11 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
             logits_for_loss = logits.permute(0, 2, 1)  # (B, vocab_size, T_sem)
             loss = F.cross_entropy(logits_for_loss, labels, ignore_index=-100)
 
+        past_out = transformer_outputs.past_key_values if return_dict else None
+        if self._graph_active and text_inputs is None and past_key_values is None and use_cache:
+            # Prefill step: move the prefix KV into the static cache
+            past_out = self._graph_decoder.prefill(past_out)
+
         if not return_dict:
             output = (logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output
@@ -313,7 +329,7 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
         return CausalLMOutputWithCrossAttentions(
             loss=loss,
             logits=logits,
-            past_key_values=transformer_outputs.past_key_values,
+            past_key_values=past_out,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
@@ -437,19 +453,27 @@ class Text2Semantic(PreTrainedModel, GenerationMixin):
         )
         attention_mask = torch.ones(batch_size, prefix_len + 1, dtype=torch.long, device=device)
 
+        use_graph = graph_decode_supported(device)
+        if use_graph and (self._graph_decoder is None or self._graph_decoder.max_len < max_length + 1):
+            self._graph_decoder = GraphDecoder(self, max_len=max_length + 1)
+        self._graph_active = use_graph
+
         # Call HuggingFace generate
-        generated = super().generate(
-            start_tokens,
-            attention_mask=attention_mask,
-            max_length=max_length,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            do_sample=do_sample,
-            eos_token_id=eos,
-            pad_token_id=self.config.stop_semantic_token,
-            **kwargs
-        )
+        try:
+            generated = super().generate(
+                start_tokens,
+                attention_mask=attention_mask,
+                max_length=max_length,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                do_sample=do_sample,
+                eos_token_id=eos,
+                pad_token_id=self.config.stop_semantic_token,
+                **kwargs
+            )
+        finally:
+            self._graph_active = False
 
         # Extract semantic tokens (remove prefix and BOS)
         semantic_codes = generated[:, prefix_len + 1:]

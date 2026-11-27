@@ -25,7 +25,7 @@ import torch
 # Make the local package importable when run as a script.
 sys.path.insert(0, str(Path(__file__).parent))
 
-from confuciustts.cli.inference_vllm import ConfuciusTTSVLLM
+from confuciustts.utils.common import resolve_device
 
 
 LANGUAGES = ("zh", "en", "ja", "ko", "de", "fr", "th", "id", "vi", "es", "pt", "it", "ru", "ms")
@@ -42,6 +42,11 @@ def parse_args():
                         help="Gradio server host.")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.4,
                         help="vLLM GPU memory utilization (default 0.4).")
+    parser.add_argument("--backend", choices=("auto", "hf", "vllm"), default="auto",
+                        help="T2S backend: vllm (CUDA only), hf (HuggingFace, works on "
+                             "CUDA / Intel XPU / CPU), or auto (vllm on CUDA if installed, else hf).")
+    parser.add_argument("--device", default="auto",
+                        help="cuda, xpu (Intel Arc), cpu or auto.")
     return parser.parse_args()
 
 
@@ -53,7 +58,7 @@ def _save_audio_to_temp(audio_tensor: torch.Tensor, sample_rate: int) -> str:
     return str(out)
 
 
-def build_demo(model: ConfuciusTTSVLLM):
+def build_demo(model):
     """Build the Gradio Blocks UI and return it together with its event loop."""
     # Dedicated event loop to run the async model from sync Gradio callbacks.
     loop = asyncio.new_event_loop()
@@ -69,9 +74,11 @@ def build_demo(model: ConfuciusTTSVLLM):
             return None, "失败：参考音频文件无效，请重新上传。"
         try:
             t0 = time.time()
-            audio = await model.generate(
+            audio = model.generate(
                 text, language, ref_path, verbose=False,
             )
+            if asyncio.iscoroutine(audio):  # vLLM backend is async, HF backend is sync
+                audio = await audio
             elapsed = time.time() - t0
             out_path = _save_audio_to_temp(audio, model.sample_rate)
             dur = audio.shape[-1] / model.sample_rate
@@ -133,12 +140,27 @@ def build_demo(model: ConfuciusTTSVLLM):
 def main():
     args = parse_args()
     # Load the model once, then hand it to the UI builder.
-    model = ConfuciusTTSVLLM(
-        config_path=args.config,
-        gpu_memory_utilization=args.gpu_memory_utilization,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-    )
-    print(f"Loaded. sample_rate={model.sample_rate}")
+    device = resolve_device(args.device)
+    backend = args.backend
+    if backend == "auto":
+        backend = "hf"
+        if device == "cuda":
+            try:
+                import vllm  # noqa: F401
+                backend = "vllm"
+            except ImportError:
+                pass
+    if backend == "vllm":
+        from confuciustts.cli.inference_vllm import ConfuciusTTSVLLM
+        model = ConfuciusTTSVLLM(
+            config_path=args.config,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            device=device,
+        )
+    else:
+        from confuciustts.cli.inference import ConfuciusTTS
+        model = ConfuciusTTS(config_path=args.config, device=device)
+    print(f"Loaded. backend={backend} device={device} sample_rate={model.sample_rate}")
 
     demo, loop = build_demo(model)
     demo.queue().launch(server_name=args.host, server_port=args.port)

@@ -6,6 +6,7 @@ import torch
 import torchaudio
 
 from confuciustts.cli.inference import ConfuciusTTS
+from confuciustts.utils.audio_io import save_audio
 
 
 def parse_args():
@@ -25,8 +26,8 @@ def parse_args():
                    help="Path to inference configuration YAML")
     p.add_argument("--t2s-checkpoint", type=str, default=None,
                    help="Override T2S checkpoint path from config")
-    p.add_argument("--device", type=str, default="cuda",
-                   help="Device for inference (cuda or cpu)")
+    p.add_argument("--device", type=str, default="auto",
+                   help="Device for inference (cuda, xpu, cpu or auto)")
     p.add_argument("--temperature", type=float, default=0.8,
                    help="Sampling temperature for T2S generation (higher = more diverse)")
     p.add_argument("--top-p", type=float, default=0.8,
@@ -71,7 +72,7 @@ def main():
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    torchaudio.save(str(out), audio.cpu(), model.sample_rate)
+    save_audio(str(out), audio, model.sample_rate)
     print(f"Saved {out} ({audio.shape[-1] / model.sample_rate:.2f}s, took {dt:.2f}s)")
 
 
