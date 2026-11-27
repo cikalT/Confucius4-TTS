@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from confuciustts.utils.audio_io import load_audio, save_audio
 from confuciustts.utils.common import resolve_device
+from webui_waveform import selection_of, waveform_editor, waveform_value, with_selection
 
 
 # --------------------------------------------------------------------------- #
@@ -352,29 +353,32 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
 
             # ============================================================ Clone
             with gr.Tab("Clone suara", id="clone"):
+                gr.Markdown("### 1. Rekaman referensi\n"
+                            "<span class='hint'>Paling bagus 3–10 detik, satu pembicara, jernih, tanpa "
+                            "musik/gema. Emosi & gaya bicara rekaman ikut ditiru.</span>")
                 with gr.Row(equal_height=False):
                     with gr.Column(scale=3):
-                        gr.Markdown("### 1. Rekaman referensi\n"
-                                    "<span class='hint'>Paling bagus 3–10 detik, satu pembicara, jernih, tanpa "
-                                    "musik/gema. Emosi & gaya bicara rekaman ikut ditiru.</span>")
                         ref_in = gr.Audio(sources=["upload", "microphone"], type="filepath",
                                           label="Upload atau rekam suara")
-                        with gr.Row():
-                            clone_name = gr.Textbox(label="Nama suara", placeholder="mis. Narator Budi", scale=2)
-                            clone_lang = gr.Dropdown(LANGUAGES, value="id", label="Bahasa default", scale=1)
-                        clone_desc = gr.Textbox(label="Catatan (opsional)", placeholder="mis. tenang, cocok untuk narasi")
                     with gr.Column(scale=2):
-                        gr.Markdown("### 2. Pembersihan rekaman")
-                        with gr.Row():
-                            trim_start = gr.Number(value=0, label="Mulai dari (detik)", minimum=0)
-                            trim_end = gr.Number(value=0, label="Sampai (detik)", minimum=0,
-                                                 info="0 = sampai akhir")
+                        clone_name = gr.Textbox(label="Nama suara", placeholder="mis. Narator Budi")
+                        clone_lang = gr.Dropdown(LANGUAGES, value="id", label="Bahasa default")
+                        clone_desc = gr.Textbox(label="Catatan (opsional)", placeholder="mis. tenang, cocok untuk narasi")
+                gr.Markdown("### 2. Potong & bersihkan rekaman")
+                wave = waveform_editor()
+                with gr.Row(equal_height=False):
+                    trim_start = gr.Number(value=0, label="Mulai (detik)", minimum=0, step=0.1,
+                                           info="Ikut berubah saat area hijau digeser.")
+                    trim_end = gr.Number(value=0, label="Sampai (detik)", minimum=0, step=0.1,
+                                         info="0 = sampai akhir")
+                    with gr.Column():
                         remove_silence = gr.Checkbox(value=True, label="Buang hening di awal & akhir")
                         top_db = gr.Slider(10, 60, value=30, step=1, label="Sensitivitas hening (dB)",
                                            info="Kecil = memotong lebih agresif.")
-                        normalize = gr.Checkbox(value=True, label="Samakan volume (normalisasi puncak -1 dB)")
+                    with gr.Column():
+                        normalize = gr.Checkbox(value=True, label="Samakan volume (puncak -1 dB)")
                         max_seconds = gr.Slider(3, 30, value=15, step=1, label="Durasi maksimal (detik)",
-                                                info="Bagian setelah ini dibuang. Disarankan ≤ 10–15 detik.")
+                                                info="Sisa setelah ini dibuang. Disarankan ≤ 10–15 detik.")
                 _, _, clone_settings = build_settings_panel(
                     "3. Settings default suara",
                     "Disimpan bersama suara dan otomatis dipakai di tab Generate (masih bisa diubah di sana).")
@@ -478,6 +482,21 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
             status += "\n\nBuka tab **Generate** untuk memakai suara ini."
             choices = library.choices()
             return status, meta["reference"], sample, gr.update(choices=choices, value=slug)
+
+        # Waveform editor <-> trim fields (both directions use .input, so no feedback loop)
+        def on_ref_change(path, max_s):
+            try:
+                value = waveform_value(path, max_s)
+            except Exception as exc:
+                gr.Warning(f"Waveform tidak bisa ditampilkan: {exc}")
+                value = waveform_value(None)
+            start, end = selection_of(value)
+            return value, start, end
+
+        ref_in.change(on_ref_change, inputs=[ref_in, max_seconds], outputs=[wave, trim_start, trim_end])
+        wave.input(selection_of, inputs=wave, outputs=[trim_start, trim_end])
+        trim_start.input(with_selection, inputs=[wave, trim_start, trim_end], outputs=wave)
+        trim_end.input(with_selection, inputs=[wave, trim_start, trim_end], outputs=wave)
 
         clone_btn.click(
             on_clone,

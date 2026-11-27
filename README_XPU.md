@@ -32,8 +32,11 @@ generation falls back to the slower eager path automatically.
 
 ### Web UI (Indonesian)
 
-- **Clone suara**: upload or record a reference clip, trim it (start/end, strip leading and
-  trailing silence, peak-normalize, cap the length), name it, and save it with default
+- **Clone suara**: upload or record a reference clip and pick the part to keep in a
+  waveform editor (`webui_waveform.py`): drag on empty space for a new selection, drag the
+  edges to resize, drag the middle to move it, play the selection, and double-click to play.
+  Start/end stay in sync with the number fields. Then optionally strip leading and trailing
+  silence, peak-normalize and cap the length, name the voice, and save it with default
   generation settings. It can also synthesize a test sentence right after saving.
   Voices are stored in `voices/<name>/` (`reference.wav` + `voice.json`); `--voices_dir`
   changes the location.
