@@ -3,7 +3,28 @@
 Tested: Intel Arc B580 (12 GB), driver 32.0.101.9150, Windows 11, Python 3.10,
 torch 2.14.1+xpu, torchaudio 2.11.0+xpu, transformers 4.52.4.
 
-## Setup (uv)
+## Cara cepat (klik saja)
+
+Butuh: Windows 10/11 64-bit, GPU Intel Arc dengan driver terbaru, internet, dan ruang disk
+bebas sekitar 8 GB di folder proyek ditambah 10 GB di drive user (model + cache).
+
+1. **`1_setup.bat`**: jalankan sekali (15–30 menit, tergantung internet). Isinya:
+   - cek Windows, GPU Arc + driver, RAM, ruang disk, dan koneksi;
+   - pasang `uv`, Python 3.10, PyTorch 2.14.1 XPU, dan semua dependensi ke folder `.venv`;
+   - unduh semua model (sekitar 5 GB);
+   - tes generate satu kalimat (hasilnya `outputs\selftest.wav`).
+
+   Kalau ada yang gagal, cukup jalankan lagi; setup aman diulang.
+2. **`2_run.bat`**: jalankan setiap kali mau memakai. Browser terbuka otomatis di
+   http://127.0.0.1:7860. Biarkan jendelanya terbuka, dan tutup jendela itu untuk berhenti.
+   Model dimuat dari cache lokal, jadi tidak butuh internet. Kalau WebUI sudah terbuka di
+   jendela lain, `2_run.bat` hanya membuka browser, karena dua proses model tidak muat di
+   VRAM 12 GB.
+
+Opsi: `2_run.bat --host 0.0.0.0` membuka WebUI untuk HP/laptop lain di jaringan yang sama;
+`2_run.bat --port 7861` memakai port lain.
+
+## Manual setup (uv)
 
 ```powershell
 uv venv --python 3.10 .venv
@@ -11,9 +32,8 @@ uv pip install --python .venv\Scripts\python.exe torch==2.14.1 --index-url https
 # torchaudio's newest XPU wheel (2.11) pins torch 2.11; the parts used here are pure
 # PyTorch and work on 2.14, so install it without deps.
 uv pip install --python .venv\Scripts\python.exe --no-deps torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/xpu
-# everything else from requirements.txt EXCEPT torch/torchaudio (so the XPU build is not replaced)
-Get-Content requirements.txt | Where-Object { $_ -notmatch '^\s*(torch|torchaudio)==' } | Set-Content -Encoding utf8 $env:TEMP\req_xpu.txt
-uv pip install --python .venv\Scripts\python.exe -r $env:TEMP\req_xpu.txt gradio
+# runtime deps without torch/torchaudio, so the XPU build is not replaced
+uv pip install --python .venv\Scripts\python.exe -r requirements_xpu.txt
 .venv\Scripts\python.exe -c "import torch; print(torch.xpu.is_available(), torch.xpu.get_device_name(0), hasattr(torch.xpu, 'XPUGraph'))"
 ```
 

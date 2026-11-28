@@ -1,0 +1,37 @@
+# Runtime dependencies for Intel Arc (XPU) on Windows, used by setup.bat.
+# torch / torchaudio are NOT listed here: setup.bat installs the XPU builds first
+# (torch 2.14.1+xpu, torchaudio 2.11.0+xpu with --no-deps) so nothing below replaces them.
+
+# Hugging Face
+transformers==4.52.4
+tokenizers==0.21.4
+safetensors==0.7.0
+huggingface_hub==0.36.2
+sentencepiece==0.2.1
+
+# Scientific / audio
+numpy==1.26.4
+scipy==1.15.3
+matplotlib==3.10.8
+librosa==0.10.2.post1
+soundfile==0.13.1
+av==17.1.0
+
+# Text processing
+inflect==7.5.0
+regex==2026.3.32
+jaconv==0.5.0
+pykakasi==2.3.0
+ema-pytorch==0.7.9
+wetext==0.1.4
+
+# Utilities
+PyYAML==6.0.3
+tqdm==4.67.3
+packaging==26.0
+filelock==3.25.2
+fsspec==2026.2.0
+protobuf==3.19.6
+
+# Web UI
+gradio==6.17.3

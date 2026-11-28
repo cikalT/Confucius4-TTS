@@ -606,6 +606,7 @@ def parse_args():
                         help="T2S backend: vllm (CUDA only), hf (HuggingFace, works on "
                              "CUDA / Intel XPU / CPU), or auto (vllm on CUDA if installed, else hf).")
     parser.add_argument("--device", default="auto", help="cuda, xpu (Intel Arc), cpu or auto.")
+    parser.add_argument("--inbrowser", action="store_true", help="Open the UI in the default browser when ready.")
     return parser.parse_args()
 
 
@@ -636,7 +637,7 @@ def main():
     library = VoiceLibrary(Path(args.voices_dir))
     demo = build_demo(model, library, device, backend)
     demo.queue(default_concurrency_limit=1).launch(
-        server_name=args.host, server_port=args.port,
+        server_name=args.host, server_port=args.port, inbrowser=args.inbrowser,
         theme=gr.themes.Soft(primary_hue="indigo", font=["Inter", "Arial", "sans-serif"]), css=CSS,
     )
 
