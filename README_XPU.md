@@ -71,6 +71,18 @@ generation falls back to the slower eager path automatically.
   Stabil, Ekspresif, Cepat, Kualitas tinggi) as starting points.
   `edge_fade_duration` / `edge_pad_duration` are not shown because `generate()` ignores them.
 - The default host is now `127.0.0.1`; pass `--host 0.0.0.0` to open it on the LAN.
+- **Narasi Video** (`webui_narration.py`), for niche-vids films: upload the film script
+  (`lines.json`, `naskah-tts.txt`, `tts-elevenlabs-v2/v3.txt` in the `L01 | [tag] text` format,
+  `tts-gemini.txt`, or plain text split into sentences). Lines are synthesized one at a time and
+  each one is saved right away to `narration/<film>/voice/<id>.wav` with its state in
+  `project.json`, so a run can be stopped and resumed by uploading the same script again.
+  Scripts without a film name (lines.json) get a content-derived name; renaming it is remembered.
+  Audio tags are removed from the spoken text and can be mapped to their own reference voices.
+  Lines whose length is far from the script estimate are flagged for a retake; single lines can
+  be edited and redone. "Buat ZIP" packs `voice/L01.wav …` (+ `confucius-narasi.json`) to extract
+  into the film folder, where the film's `prep_voice.py` reads it. Defaults to raw text (no
+  normalization) because these scripts already spell numbers as words. A global lock keeps the
+  Narasi, Generate and Clone tabs from running the model at the same time.
 
 Models (~5 GB) download to `%USERPROFILE%\.cache\huggingface` on first run.
 Only one model process fits in 12 GB VRAM: if two run at once, Windows spills to shared

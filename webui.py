@@ -24,10 +24,12 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import gradio as gr
 import numpy as np
@@ -38,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from confuciustts.utils.audio_io import decode_with_av, load_audio, save_audio
 from confuciustts.utils.common import resolve_device
+from webui_narration import build_narration_tab
 from webui_waveform import selection_of, waveform_editor, waveform_value, with_selection
 
 
@@ -185,6 +188,9 @@ def process_reference(path, trim_start, trim_end, remove_silence, top_db, normal
 # --------------------------------------------------------------------------- #
 # UI helpers
 # --------------------------------------------------------------------------- #
+GPU_LOCK = threading.Lock()
+
+
 def free_accelerator_cache(device: str):
     acc = getattr(torch, device, None) if device in ("cuda", "xpu") else None
     if acc is not None and acc.is_available():
@@ -219,8 +225,12 @@ def values_from_settings(settings):
     return [merged[k] for k in SETTING_KEYS]
 
 
-def build_settings_panel(title, note):
-    """Visible settings panel. Returns (preset_radio, reset_btn, [components in SETTING_KEYS order])."""
+def build_settings_panel(title, note, base=None):
+    """Visible settings panel. Returns (preset_radio, reset_btn, [components in SETTING_KEYS order]).
+
+    `base` overrides DEFAULTS for this panel (initial values, presets and reset start from it).
+    """
+    B = {**DEFAULTS, **(base or {})}
     with gr.Group():
         gr.Markdown(f"### {title}\n<span class='hint'>{note}</span>")
         with gr.Row(equal_height=False):
@@ -231,37 +241,37 @@ def build_settings_panel(title, note):
     with gr.Row(equal_height=False):
         with gr.Column(elem_classes="setting-card"):
             gr.Markdown("#### Gaya & stabilitas")
-            temperature = gr.Slider(0.1, 1.5, value=DEFAULTS["temperature"], step=0.05, label="Variasi / temperature",
+            temperature = gr.Slider(0.1, 1.5, value=B["temperature"], step=0.05, label="Variasi / temperature",
                                     info="Rendah = stabil & konsisten. Tinggi = lebih ekspresif, tapi bisa salah ucap. (≈ Stability di ElevenLabs, dibalik)")
-            top_p = gr.Slider(0.1, 1.0, value=DEFAULTS["top_p"], step=0.05, label="Top-p",
+            top_p = gr.Slider(0.1, 1.0, value=B["top_p"], step=0.05, label="Top-p",
                               info="Batas peluang token yang boleh dipilih. Rendah = aman, tinggi = beragam.")
-            top_k = gr.Slider(1, 100, value=DEFAULTS["top_k"], step=1, label="Top-k",
+            top_k = gr.Slider(1, 100, value=B["top_k"], step=1, label="Top-k",
                               info="Jumlah kandidat token tiap langkah. Rendah = aman, tinggi = beragam.")
-            repetition_penalty = gr.Slider(1.0, 20.0, value=DEFAULTS["repetition_penalty"], step=0.5,
+            repetition_penalty = gr.Slider(1.0, 20.0, value=B["repetition_penalty"], step=0.5,
                                            label="Penalti pengulangan",
                                            info="Mencegah suara mengulang/macet. Turunkan jika suara terdengar terburu-buru.")
         with gr.Column(elem_classes="setting-card"):
             gr.Markdown("#### Kualitas & kecepatan")
-            num_beams = gr.Slider(1, 5, value=DEFAULTS["num_beams"], step=1, label="Jumlah beam",
+            num_beams = gr.Slider(1, 5, value=B["num_beams"], step=1, label="Jumlah beam",
                                   info="Lebih banyak = lebih rapi tapi lebih lambat. 1 = tercepat.")
-            n_timesteps = gr.Slider(4, 64, value=DEFAULTS["n_timesteps"], step=1, label="Langkah difusi",
+            n_timesteps = gr.Slider(4, 64, value=B["n_timesteps"], step=1, label="Langkah difusi",
                                     info="Detail akustik. Lebih banyak = lebih halus tapi lebih lambat.")
-            inference_cfg_rate = gr.Slider(0.0, 2.0, value=DEFAULTS["inference_cfg_rate"], step=0.05,
+            inference_cfg_rate = gr.Slider(0.0, 2.0, value=B["inference_cfg_rate"], step=0.05,
                                            label="Kekuatan kemiripan / CFG",
                                            info="Seberapa kuat hasil mengikuti kondisi suara. (≈ Similarity di ElevenLabs)")
-            max_length = gr.Slider(200, 1520, value=DEFAULTS["max_length"], step=10, label="Panjang token maksimal",
+            max_length = gr.Slider(200, 1520, value=B["max_length"], step=10, label="Panjang token maksimal",
                                    info="Batas panjang audio per potongan teks. Biarkan maksimal kecuali ingin membatasi.")
         with gr.Column(elem_classes="setting-card"):
             gr.Markdown("#### Teks panjang & lainnya")
-            max_text_tokens_per_segment = gr.Slider(20, 200, value=DEFAULTS["max_text_tokens_per_segment"], step=5,
+            max_text_tokens_per_segment = gr.Slider(20, 200, value=B["max_text_tokens_per_segment"], step=5,
                                                     label="Panjang potongan teks",
                                                     info="Teks panjang dipecah per potongan. Kecil = lebih stabil, besar = intonasi lebih menyambung.")
-            cross_fade_duration = gr.Slider(0.0, 1.5, value=DEFAULTS["cross_fade_duration"], step=0.05,
+            cross_fade_duration = gr.Slider(0.0, 1.5, value=B["cross_fade_duration"], step=0.05,
                                             label="Jeda antar potongan (detik)",
                                             info="Jeda hening + fade di antara potongan teks.")
-            raw = gr.Checkbox(value=DEFAULTS["raw"], label="Lewati normalisasi teks",
+            raw = gr.Checkbox(value=B["raw"], label="Lewati normalisasi teks",
                               info="Centang agar teks dibaca apa adanya (angka/singkatan tidak diubah otomatis). Tulis angka sebagai kata.")
-            seed = gr.Number(value=DEFAULTS["seed"], precision=0, label="Seed",
+            seed = gr.Number(value=B["seed"], precision=0, label="Seed",
                              info="-1 = acak tiap kali. Isi angka (lihat status hasil) untuk mengulang hasil yang sama persis.")
     comps = [temperature, top_p, top_k, repetition_penalty, num_beams, n_timesteps, inference_cfg_rate,
              max_length, max_text_tokens_per_segment, cross_fade_duration, raw, seed]
@@ -272,10 +282,10 @@ def build_settings_panel(title, note):
     comps = [ordered[k] for k in SETTING_KEYS]
 
     def apply_preset(name):
-        return values_from_settings(PRESETS.get(name, {}))
+        return values_from_settings({**(base or {}), **PRESETS.get(name, {})})
 
     preset.input(apply_preset, inputs=preset, outputs=comps)
-    reset.click(lambda: [DEFAULT_PRESET] + values_from_settings({}), outputs=[preset] + comps)
+    reset.click(lambda: [DEFAULT_PRESET] + values_from_settings(base), outputs=[preset] + comps)
     return preset, reset, comps
 
 
@@ -286,34 +296,43 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
     loop = asyncio.new_event_loop()
     accepted = set(inspect.signature(model.generate).parameters)
 
-    def run_generate(text, lang, ref_path, settings):
-        """Synthesize; returns (wav path, markdown status)."""
+    def synthesize(text, lang, ref_path, settings):
+        """Run the model once. Returns (audio tensor (1, T), seed used, seconds, ignored keys).
+
+        Serialized with GPU_LOCK: different Gradio events (Generate, Clone, Narasi) may run
+        at the same time, and two concurrent generations do not fit in 12 GB of VRAM.
+        """
         s = dict(settings)
         seed = s.pop("seed")
         if seed is None or seed < 0:
             seed = random.randint(0, 2**31 - 1)
-        random.seed(seed); np.random.seed(seed % (2**32)); torch.manual_seed(seed)
         kwargs = {k: v for k, v in s.items() if k in accepted}
         ignored = [k for k in s if k not in accepted]
 
-        t0 = time.time()
-        print(f"[{time.strftime('%H:%M:%S')}] generate: {len(text)} chars, lang={lang}, "
-              f"ref={Path(ref_path).parent.name}, seed={seed}", flush=True)
-        try:
-            audio = model.generate(text, lang, ref_path, verbose=False, **kwargs)
-            if asyncio.iscoroutine(audio):  # vLLM backend is async
-                audio = loop.run_until_complete(audio)
-        except Exception as exc:
-            raise gr.Error(f"Gagal generate: {type(exc).__name__}: {exc}") from exc
-        finally:
-            # Return cached blocks from this request's shapes to the driver. Without this the
-            # allocator keeps growing across requests until VRAM spills into shared system
-            # memory, which makes generation crawl (seen on a 12 GB Arc B580).
-            free_accelerator_cache(device)
-        elapsed = time.time() - t0
+        with GPU_LOCK:
+            random.seed(seed); np.random.seed(seed % (2**32)); torch.manual_seed(seed)
+            t0 = time.time()
+            print(f"[{time.strftime('%H:%M:%S')}] generate: {len(text)} chars, lang={lang}, "
+                  f"ref={Path(ref_path).parent.name}, seed={seed}", flush=True)
+            try:
+                audio = model.generate(text, lang, ref_path, verbose=False, **kwargs)
+                if asyncio.iscoroutine(audio):  # vLLM backend is async
+                    audio = loop.run_until_complete(audio)
+            except Exception as exc:
+                raise gr.Error(f"Gagal generate: {type(exc).__name__}: {exc}") from exc
+            finally:
+                # Return cached blocks from this request's shapes to the driver. Without this the
+                # allocator keeps growing across requests until VRAM spills into shared system
+                # memory, which makes generation crawl (seen on a 12 GB Arc B580).
+                free_accelerator_cache(device)
+            elapsed = time.time() - t0
         print(f"[{time.strftime('%H:%M:%S')}]   done: {audio.shape[-1] / model.sample_rate:.1f}s audio "
               f"in {elapsed:.1f}s, {vram_summary(device)}", flush=True)
+        return audio, seed, elapsed, ignored
 
+    def run_generate(text, lang, ref_path, settings):
+        """Synthesize; returns (wav path, markdown status)."""
+        audio, seed, elapsed, ignored = synthesize(text, lang, ref_path, settings)
         out = Path(tempfile.gettempdir()) / f"confucius4_{uuid.uuid4().hex[:10]}.wav"
         save_audio(out, audio, model.sample_rate)
         dur = audio.shape[-1] / model.sample_rate
@@ -432,6 +451,13 @@ def build_demo(model, library: VoiceLibrary, device: str, backend: str):
                                               interactive=False)
 
             # ============================================================ Guide
+            # ============================================================ Narration
+            with gr.Tab("Narasi Video", id="narasi"):
+                build_narration_tab(SimpleNamespace(
+                    library=library, synthesize=synthesize, sample_rate=model.sample_rate,
+                    languages=LANGUAGES, build_settings_panel=build_settings_panel,
+                    settings_from_values=settings_from_values))
+
             with gr.Tab("Panduan", id="guide"):
                 gr.Markdown(GUIDE_MD)
 
@@ -575,6 +601,13 @@ GUIDE_MD = """
 2. **Generate**: pilih suara, ketik teks, pilih bahasa teks, lalu klik **Generate suara**.
    Setting terisi dari default suara. Ubah seperlunya, lalu klik *Simpan settings ini sebagai default suara*
    jika ingin dipakai terus.
+3. **Narasi Video** (untuk film niche-vids): upload `lines.json` (atau `naskah-tts.txt`,
+   `tts-elevenlabs-v3.txt`, teks biasa), pilih suara utama dan (opsional) suara per tag emosi, lalu
+   klik **Generate baris yang belum**. Tiap kalimat dibuat dan disimpan satu per satu di
+   `narration/<film>/`. Boleh di-Stop kapan saja; upload naskah yang sama untuk melanjutkan.
+   Baris bertanda ⚠ (jauh lebih panjang/pendek dari perkiraan) bisa diulang sekaligus, atau satu
+   baris diedit dan diulang. Terakhir **Buat ZIP**, lalu ekstrak ke folder film supaya jadi
+   `voice\L01.wav …`. Render seperti biasa: `prep_voice.py` di film membaca folder itu.
 
 ## Arti setting
 | Setting | Padanan ElevenLabs | Efek |
