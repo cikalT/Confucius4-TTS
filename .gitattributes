@@ -1,1 +1,2 @@
-*.bat text eol=crlf
+# Store .bat files byte-for-byte with CRLF so they also work from a GitHub ZIP download.
+*.bat -text
